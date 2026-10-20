@@ -11,8 +11,15 @@ const DefaultKey = "module-template"
 // Name is the human-readable module name.
 const Name = "Module Template"
 
-// Version is stamped at build time (-ldflags "-X …/internal/module.Version=…").
-var Version = "dev"
+// BaseVersion is the module's own version; bump it when you release.
+const BaseVersion = "0.1.0"
+
+// GitSHA is stamped at build time (-ldflags "-X …/internal/module.GitSHA=…").
+// Every deploy changes it, so hosts re-read the manifest and tool list.
+var GitSHA = "dev"
+
+// Version is BaseVersion+GitSHA, the manifest version.
+var Version = BaseVersion + "+" + GitSHA
 
 // Manifest is the document served at /.well-known/helixos-module.json.
 type Manifest struct {

@@ -1,0 +1,22 @@
+# Production: run by .helix/startup.sh when HELIX_WEB_SERVICE_PORT is set.
+services:
+  module:
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+    ports:
+      - "${HELIX_WEB_SERVICE_PORT:-8080}:8080"
+    volumes:
+      # Durable, project-keyed data dir from Helix web services. PocketBase is
+      # single-writer SQLite: Helix stops the old instance before starting this one.
+      - "${HELIX_WEB_SERVICE_DATA_DIR:-./data}:/data"
+    environment:
+      # Set as Helix project secrets by HelixOS when the module is created.
+      - MODULE_KEY
+      - MODULE_PUBLIC_URL
+      - HELIXOS_ISSUERS
+      - HELIXOS_MODULE_CREDENTIALS
+      - HELIXOS_ISSUER_ENDPOINTS
+      - MODULE_FILE_SIGNING_KEY
+    restart: unless-stopped

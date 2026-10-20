@@ -1,0 +1,35 @@
+#!/bin/bash
+# Checks the whole module: Go vet + tests (incl. the in-process integration
+# suite against a fake host), the UI typecheck + build, then a live smoke test
+# of the real binary on a throwaway data dir. Run it before every PR.
+set -uo pipefail
+cd "$(dirname "$0")"
+pass=0; fail=0
+check() { local name=$1; shift; if "$@" >/tmp/selftest.$$ 2>&1; then echo "  ok   $name"; pass=$((pass+1)); else echo "  FAIL $name"; sed 's/^/       /' /tmp/selftest.$$ | tail -20; fail=$((fail+1)); fi; }
+
+echo "== go"
+check "go vet" go vet ./...
+check "go test (unit + integration)" go test -count=1 ./...
+check "go build" env CGO_ENABLED=0 go build -o /tmp/module-selftest .
+
+echo "== web"
+if [ ! -d web/node_modules ]; then (cd web && npm ci --no-audit --no-fund >/dev/null 2>&1); fi
+check "web typecheck" npm --prefix web run -s typecheck
+check "web build" npm --prefix web run -s build
+
+echo "== live smoke"
+port=$((20000 + RANDOM % 10000)); dir=$(mktemp -d)
+HELIXOS_ISSUERS=http://127.0.0.1:1 MODULE_WEB_DIR=web/out /tmp/module-selftest serve --http 127.0.0.1:$port --dir "$dir" >"$dir/log" 2>&1 &
+pid=$!
+for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$port/healthz" >/dev/null && break; sleep 0.2; done
+base="http://127.0.0.1:$port"
+check "healthz answers" curl -sf "$base/healthz"
+check "manifest is valid JSON with schema_version 1" sh -c "curl -sf $base/.well-known/helixos-module.json | grep -q '\"schema_version\":1'"
+check "API refuses unauthenticated calls" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $base/api/app/notes)\" = 401 ]"
+check "PocketBase dashboard is hidden" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $base/_/)\" = 404 ]"
+check "pages are frameable by hosts" sh -c "! curl -sI $base/ | grep -qi x-frame-options"
+check "UI is served" sh -c "curl -sf $base/ | grep -q '<html'"
+kill $pid 2>/dev/null; rm -rf "$dir"
+
+echo "== $pass passed, $fail failed"
+[ $fail -eq 0 ]
