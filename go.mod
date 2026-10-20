@@ -2,6 +2,8 @@ module github.com/helixml/helixos-module-template
 
 go 1.27
 
+toolchain go1.27.2
+
 require (
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.40.4
