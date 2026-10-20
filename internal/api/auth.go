@@ -8,8 +8,6 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-
-
 // requireUser verifies the user token the module UI sends (contract §4.3).
 func (d *Deps) requireUser(e *core.RequestEvent) error {
 	tok := bearer(e.Request)

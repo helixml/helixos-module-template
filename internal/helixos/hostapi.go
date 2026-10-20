@@ -29,7 +29,9 @@ type HostError struct {
 	Message string `json:"error"`
 }
 
-func (e *HostError) Error() string { return fmt.Sprintf("host API %d %s: %s", e.Status, e.Code, e.Message) }
+func (e *HostError) Error() string {
+	return fmt.Sprintf("host API %d %s: %s", e.Status, e.Code, e.Message)
+}
 
 // NotImplemented reports a host that lacks the feature (contract §6.2): the
 // module should degrade, not fail.

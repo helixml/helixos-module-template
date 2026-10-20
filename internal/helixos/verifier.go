@@ -64,9 +64,9 @@ type keySet struct {
 }
 
 const (
-	jwksTTL         = 10 * time.Minute
-	jwksMinRefetch  = 30 * time.Second
-	maxJWKSBytes    = 64 << 10
+	jwksTTL        = 10 * time.Minute
+	jwksMinRefetch = 30 * time.Second
+	maxJWKSBytes   = 64 << 10
 )
 
 // NewVerifier builds a verifier.

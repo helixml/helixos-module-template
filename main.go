@@ -34,6 +34,9 @@ func main() {
 	deps := NewDeps(app, config)
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		// Modules have no PocketBase superusers (identity comes from the host),
+		// so never open PocketBase's first-run installer.
+		se.InstallerFunc = nil
 		api.Register(se, deps)
 		return se.Next()
 	})
