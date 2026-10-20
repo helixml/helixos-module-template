@@ -4,9 +4,11 @@ package api
 
 import (
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/helixml/helixos-module-template/cfg"
@@ -88,7 +90,7 @@ func Register(se *core.ServeEvent, d *Deps) {
 
 	// Static UI (Next.js export with trailingSlash, so every page is a dir index).
 	if _, err := os.Stat(d.Cfg.WebDir); err == nil {
-		se.Router.GET("/{path...}", apis.Static(os.DirFS(d.Cfg.WebDir), true))
+		se.Router.GET("/{path...}", staticUI(d.Cfg.WebDir))
 	} else {
 		log.Printf("module: no UI build at %s; serving the API only", d.Cfg.WebDir)
 	}
@@ -104,3 +106,22 @@ func fail(e *core.RequestEvent, err error) error {
 }
 
 var errNoHostAPI = errors.New("no module credential is configured for this host")
+
+// staticUI serves the Next.js export. PocketBase's Static redirects "/job" to
+// "/job/" but drops the query on the way, and HelixOS deep links arrive as
+// "/job?id=…" — so the directory redirect is done here, query kept.
+func staticUI(dir string) func(*core.RequestEvent) error {
+	fsys := os.DirFS(dir)
+	serve := apis.Static(fsys, true)
+	return func(e *core.RequestEvent) error {
+		p := e.Request.URL.Path
+		if p != "/" && !strings.HasSuffix(p, "/") {
+			if fi, err := fs.Stat(fsys, strings.TrimPrefix(path.Clean(p), "/")); err == nil && fi.IsDir() {
+				u := *e.Request.URL
+				u.Path = p + "/"
+				return e.Redirect(http.StatusFound, u.RequestURI())
+			}
+		}
+		return serve(e)
+	}
+}
