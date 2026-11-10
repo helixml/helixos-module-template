@@ -25,6 +25,9 @@ PORT=${DEV_PORT:-8080}
 WEB_PORT=${DEV_WEB_PORT:-3000}
 HOST_PORT=${DEV_HOST_PORT:-8090}
 DEV_HOST_URL="http://localhost:$HOST_PORT"
+# The fake host's issuer is a name no real HelixOS uses (a local HelixOS dev
+# stack is often http://localhost:8090 too), mapped to its JWKS below.
+DEV_HOST_ISSUER="http://devhost.localhost:$HOST_PORT"
 DATA=.dev-data
 BIN=$DATA/bin/module
 STAMP=$DATA/.built
@@ -49,13 +52,14 @@ unset MODULE_DEV
 if [ -z "${HELIXOS_ISSUERS:-}" ] && [ -n "${HELIXOS_MODULE_DEV_CREDENTIALS:-}" ]; then
   HELIXOS_ISSUERS=$(echo "$HELIXOS_MODULE_DEV_CREDENTIALS" | tr ',' '\n' | sed -n 's/=.*//p' | paste -sd, -)
 fi
-export HELIXOS_ISSUERS="${HELIXOS_ISSUERS:+$HELIXOS_ISSUERS,}$DEV_HOST_URL"
+export HELIXOS_ISSUERS="${HELIXOS_ISSUERS:+$HELIXOS_ISSUERS,}$DEV_HOST_ISSUER"
+export HELIXOS_ISSUER_ENDPOINTS="${HELIXOS_ISSUER_ENDPOINTS:+$HELIXOS_ISSUER_ENDPOINTS,}$DEV_HOST_ISSUER=http://127.0.0.1:$HOST_PORT"
 DEVHOST_CREDENTIAL="hxm_devhost_$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
 export DEVHOST_CREDENTIAL
 if [ -n "${HELIXOS_MODULE_CREDENTIALS:-}" ]; then
-  export HELIXOS_MODULE_CREDENTIALS="$HELIXOS_MODULE_CREDENTIALS,$DEV_HOST_URL=$DEVHOST_CREDENTIAL"
+  export HELIXOS_MODULE_CREDENTIALS="$HELIXOS_MODULE_CREDENTIALS,$DEV_HOST_ISSUER=$DEVHOST_CREDENTIAL"
 else
-  export HELIXOS_MODULE_DEV_CREDENTIALS="${HELIXOS_MODULE_DEV_CREDENTIALS:+$HELIXOS_MODULE_DEV_CREDENTIALS,}$DEV_HOST_URL=$DEVHOST_CREDENTIAL"
+  export HELIXOS_MODULE_DEV_CREDENTIALS="${HELIXOS_MODULE_DEV_CREDENTIALS:+$HELIXOS_MODULE_DEV_CREDENTIALS,}$DEV_HOST_ISSUER=$DEVHOST_CREDENTIAL"
 fi
 export MODULE_WEB_DEV_PROXY="http://127.0.0.1:$WEB_PORT"
 export NEXT_TELEMETRY_DISABLED=1
@@ -93,7 +97,7 @@ changed() {
 }
 
 start_go() {
-  "$BIN" devhost --addr "127.0.0.1:$HOST_PORT" --issuer "$DEV_HOST_URL" --module "http://localhost:$PORT" \
+  "$BIN" devhost --addr "127.0.0.1:$HOST_PORT" --issuer "$DEV_HOST_ISSUER" --module "http://localhost:$PORT" \
     --credential "$DEVHOST_CREDENTIAL" &
   host_pid=$!
   "$BIN" serve --http "0.0.0.0:$PORT" --dir "$DATA" &
@@ -106,8 +110,8 @@ log "building"
 until build; do log "build failed; fix it and save (retrying on change)"; until changed; do sleep 1; done; done
 
 if [ ! -f "$DATA/data.db" ]; then
-  log "first run: seeding $DATA for org_dev on $DEV_HOST_URL"
-  "$BIN" seed --dir "$DATA" --host "$DEV_HOST_URL" --org org_dev
+  log "first run: seeding $DATA for org_dev"
+  "$BIN" seed --dir "$DATA" --host "$DEV_HOST_ISSUER" --org org_dev
 fi
 
 (cd web && exec node_modules/.bin/next dev --port "$WEB_PORT" --hostname 127.0.0.1) &

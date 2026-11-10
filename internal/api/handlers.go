@@ -84,7 +84,7 @@ func (d *Deps) askAgent(e *core.RequestEvent) error {
 	})
 	if err != nil {
 		if helixos.NotImplemented(err) {
-			return apiErr(e, http.StatusNotImplemented, "not_implemented", "this host cannot run agents")
+			return apiErr(e, http.StatusNotImplemented, "not_implemented", "This host cannot run agents. The local dev host never does: to try agent runs, open the module in HelixOS (turn on Dev preview on its module page to use this dev server there).")
 		}
 		return apiErr(e, http.StatusBadGateway, "upstream_failed", err.Error())
 	}
