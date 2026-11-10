@@ -22,7 +22,7 @@ const pageHTML = `<!doctype html>
 <style>
   :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
   * { box-sizing: border-box; }
-  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: #f4f4f5; }
+  body { margin: 0; height: 100vh; display: flex; flex-direction: column; background: #f4f4f5; color: #18181b; }
   body.dark { background: #09090b; color: #fafafa; }
   header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 2px dashed #f59e0b; font-size: 13px; }
   header b { font-size: 14px; }
