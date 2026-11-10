@@ -57,13 +57,19 @@ type Events struct {
 // Build returns the manifest for module key.
 func Build(key string) Manifest {
 	return Manifest{
-		SchemaVersion:        1,
-		Key:                  key,
-		Name:                 Name,
-		Version:              Version,
-		Description:          "Starter module: org-scoped notes, an agent tool, and agent runs shown inline.",
-		Icon:                 "Puzzle",
-		Sections:             []Section{{Key: "main", Label: Name, Icon: "Puzzle", Path: "/"}},
+		SchemaVersion: 1,
+		Key:           key,
+		Name:          Name,
+		Version:       Version,
+		Description:   "Starter module: org-scoped notes, an agent tool, and agent runs shown inline.",
+		Icon:          "Puzzle",
+		// The runbooks page shows the instructions every agent runs with
+		// (runbooks/*.md). Section icons must be in the host's icon set:
+		// HelixOS's sidebar knows BookText, Puzzle, UserSearch, FileText…
+		Sections: []Section{
+			{Key: "main", Label: Name, Icon: "Puzzle", Path: "/"},
+			{Key: "runbooks", Label: Name + " runbooks", Icon: "BookText", Path: "/runbooks"},
+		},
 		MCP:                  &Endpoint{Path: "/mcp"},
 		Events:               &Events{Path: "/helixos/events", Subscribe: []string{"run.completed", "installation.changed"}},
 		HostScopes:           []string{"identity.read", "agents.run"},

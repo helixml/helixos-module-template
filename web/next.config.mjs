@@ -5,9 +5,8 @@ const nextConfig = {
   output: "export",
   trailingSlash: true,
   images: { unoptimized: true },
-  // In `next dev`, proxy the module API to the Go binary on :8080.
-  async rewrites() {
-    return process.env.NODE_ENV === "production" ? [] : [{ source: "/api/:path*", destination: "http://localhost:8080/api/:path*" }];
-  },
+  // In development the Go server on :8080 proxies the UI to `next dev`
+  // (MODULE_WEB_DEV_PROXY, see ./dev), so the UI and the API share an origin
+  // and no rewrites are needed.
 };
 export default nextConfig;

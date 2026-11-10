@@ -4,6 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import { helixos, ApiError } from "@/lib/helixos-sdk";
 import { useHost } from "@/components/host-provider";
 import { RunFrame } from "@/components/run-frame";
+import { ViewRunbookButton } from "@/components/runbook-drawer";
+
+// The runbook "Ask an agent" runs (runbooks/notes-agent.md; the run's meta
+// carries it too). Show it wherever the run is started or shown.
+const NOTES_RUNBOOK = "notes-agent";
 
 interface Note {
   id: string;
@@ -88,6 +93,10 @@ export default function NotesPage() {
         {user ? `Signed in as ${user.name || user.email}. ` : "Connecting to your workspace… "}
         Notes are stored in this module and visible only to your organization.
       </p>
+      <p className="muted small">
+        &ldquo;Ask an agent&rdquo; runs the notes agent, which follows a runbook.{" "}
+        <ViewRunbookButton runbookKey={NOTES_RUNBOOK} label="Read the notes agent runbook" />
+      </p>
 
       {error && <p className="error">{error}</p>}
 
@@ -106,6 +115,7 @@ export default function NotesPage() {
         <div className="card">
           <div className="row">
             <h2 className="grow">Agent run</h2>
+            <ViewRunbookButton runbookKey={NOTES_RUNBOOK} />
             <span className="badge">{run.status}</span>
             <button onClick={() => setRun(null)}>Close</button>
           </div>

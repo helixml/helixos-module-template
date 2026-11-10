@@ -17,10 +17,15 @@ internal/helixos/       contract plumbing: token verification, host API client (
 internal/ops/           business logic; REST and MCP both call these functions
 internal/api/           HTTP routes: UI API (/api/app/*), /mcp, /helixos/events, files, static UI
 internal/mcp/           the module's agent tools (JSON-RPC over POST /mcp)
-internal/seed/          fixture data shared by the `seed` command and the tests
-internal/integration/   in-process tests against a fake host
+internal/seed/          fixture data shared by the `seed` command, ./dev and the tests
+internal/runbook/       parses runbooks/*.md (frontmatter, includes, {{vars}})
+runbooks/               agent instructions, one markdown file per runbook (embedded)
+internal/devhost/       local fake host (`go run . devhost`): JWKS, tokens, frame page, whoami
+internal/integration/   in-process tests against internal/devhost
 web/                    Next.js static export; web/lib/helixos-sdk.ts speaks the frame protocol
-.helix/startup.sh       how Helix boots this as a web service
+dev                     the inner dev loop (module :8080, next dev, dev host :8090)
+.helix/startup.sh       how Helix boots this: web service, or ./dev in an agent task
+scripts/                update-from-template: merge the latest template into this module
 selftest                run this before every PR
 ```
 
@@ -45,25 +50,98 @@ selftest                run this before every PR
 7. **Degrade on `not_implemented`.** Hosts differ (cyber has no Slack); check
    `helixos.NotImplemented(err)` and carry on.
 8. **Migrations are additive.** Add a new file; never edit or delete an applied one.
+9. **Agent instructions live in `runbooks/*.md`.** Humans see them on the Runbooks
+   page, rendered from the same text the agent is given. Never inline long prompts in
+   Go: build a run's instructions from a runbook (`d.runbookText(key)`).
+
+## Runbooks
+
+A runbook is the workflow an agent follows: markdown with a short frontmatter.
+
+```
+---
+key: notes-agent            # = the file name (runbooks/notes-agent.md)
+title: Notes agent
+summary: One line on what the agent does.
+order: 1                    # optional; sorts the list
+---
+You help with notes in the {{module_name}} module…
+```
+
+- **Runs.** Pass the runbook's text as the run's `system_prompt` and put its key in
+  the run's `meta` (`internal/api/handlers.go`, `askAgent`). Per-run facts (the note,
+  the role) go in the `prompt`, not the runbook.
+- **Vars.** `{{name}}` placeholders are filled from `runbookVars()`
+  (`internal/api/runbooks.go`: `module_name`, `tool_prefix`), for the agent and for
+  the page alike, so tool names follow `MODULE_KEY`.
+- **Shared text** goes in a fragment, a `_name.md` file that is not listed itself,
+  pulled in by a line of its own: `<!-- include: _name.md -->`. It is expanded before
+  anyone sees the text, so each runbook reads as one complete document.
+- **Showing them.** `GET /api/app/runbooks` lists `{key, title, summary}`;
+  `GET /api/app/runbooks/{key}` adds `markdown`. Both are read-only and need a user
+  token. The **Runbooks** section (`/runbooks`, in the manifest) lists and renders
+  them; wherever the UI starts or shows a run, add
+  `<ViewRunbookButton runbookKey=…>` (`web/components/runbook-drawer.tsx`) so a person
+  can read what the agent will do before and while it runs.
+- If an exact prompt matters (a deployed module), pin it with a golden-file test
+  before moving it into a runbook, and keep it.
 
 ## Running locally
 
 ```bash
-# 1. a host: HelixOS dev stack on http://localhost:8090 (see helixos/README)
-# 2. the module
-HELIXOS_ISSUERS=http://localhost:8090 \
-HELIXOS_MODULE_CREDENTIALS=http://localhost:8090=<credential from registration> \
-MODULE_DEV=true go run . serve --http 0.0.0.0:4100
-go run . seed --host http://localhost:8090 --org <your org id>
-# 3. the UI, rebuilt on change (served by the binary from web/out)
-npm --prefix web run build
-# 4. register it in HelixOS: Modules → Register by URL → http://localhost:4100, then Install
+./dev
 ```
 
-In a Helix spec-task sandbox the host may not be reachable at its public URL; set
-`HELIXOS_ISSUER_ENDPOINTS=<public iss>=<reachable url>`. For calling your own API from
-a terminal, mint an 8-hour developer token in HelixOS (module page → Developer token)
-and send it as `Authorization: Bearer`.
+That is the whole loop. No HelixOS checkout or login is needed. In a Helix agent task
+`.helix/startup.sh` has already started it in the background (log:
+`/tmp/module-dev.log`; stop it with `kill $(cat .dev-data/dev.pid)`).
+
+| Port | What |
+|---|---|
+| `:8080` | The module: manifest, API, MCP, and the UI. In dev it reverse-proxies UI paths to `next dev` (`MODULE_WEB_DEV_PROXY`), so edits under `web/` hot-reload on the module's own origin. A `.go` change rebuilds and restarts it. |
+| `:8090` | The **local dev host** (`go run . devhost`, `internal/devhost`). Open **http://localhost:8090** in your browser: it frames the module as a signed-in dev user (`Dev User`, org `org_dev`) and speaks the frame protocol, exactly like HelixOS does. |
+| `:3000` | `next dev` (loopback only; always go through `:8080`). |
+
+- Data lives in `.dev-data/` and is seeded for `org_dev` on the first run. Delete the
+  directory to start over.
+- The dev host implements `whoami`. Every other host API call (agent runs, people,
+  Slack…) answers `501 not_implemented`; the module must degrade on that anyway (rule 7).
+  To exercise those, use Dev preview (below).
+- `./dev` trusts the dev host as an issuer for its own processes only. It does **not**
+  set `MODULE_DEV`: production security stays on, because `:8080` is what Dev preview
+  exposes publicly.
+- To call your own API from a terminal, mint a token from the dev host:
+
+  ```bash
+  tok=$(curl -s -X POST -H 'Origin: http://localhost:8090' localhost:8090/devhost/token | jq -r .token)
+  curl -H "Authorization: Bearer $tok" localhost:8080/api/app/notes
+  ```
+
+### Dev preview: your dev server inside real HelixOS
+
+When this repo is a module's dev task in HelixOS, a manager of the module's owner org
+can switch the module page from **Production** to **Dev preview**. HelixOS then frames
+this task's `:8080` (through a Helix preview URL) inside the real HelixOS UI, with real
+user tokens for the owner org, so changes appear there seconds after you save.
+
+- Only the UI and the module's host-API calls use the dev build. Bots, agent tools
+  (MCP), events and run views keep using the **production** deployment.
+- Host API calls from the dev build use `HELIXOS_MODULE_DEV_CREDENTIALS`, a dev-scoped
+  credential that only works for the owner org's installation. The production
+  credential never enters the task. HelixOS provides it (and `HELIXOS_ISSUERS`) as task
+  secrets; `./dev` picks them up, and derives the issuers from the credential when
+  `HELIXOS_ISSUERS` is not set.
+- The preview reads and writes `.dev-data/`, the task's throwaway database, under the
+  real owner org, so it starts empty: production data is never touched.
+
+## Delivering work
+
+Always deliver with **`propose_pull_request`**, on every kind of repo: GitHub, GitLab
+and Helix-hosted repos all have pull requests. Never merge to `main` yourself. Merging
+the pull request to `main` redeploys the module's web service.
+
+To pick up a newer template (contract plumbing, `./dev`, `./selftest`), run
+`scripts/update-from-template`, resolve any conflicts, and run `./selftest`.
 
 ## Before a PR
 

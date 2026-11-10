@@ -1,7 +1,9 @@
 #!/bin/bash
 # Checks the whole module: Go vet + tests (incl. the in-process integration
-# suite against a fake host), the UI typecheck + build, then a live smoke test
-# of the real binary on a throwaway data dir. Run it before every PR.
+# suite against the dev host, and the dev UI proxy), the UI typecheck + build,
+# a live smoke test of the real binary on a throwaway data dir, and the dev
+# loop's pieces (the dev host and the UI proxy) as real processes. Run it
+# before every PR.
 set -uo pipefail
 cd "$(dirname "$0")"
 pass=0; fail=0
@@ -26,10 +28,30 @@ base="http://127.0.0.1:$port"
 check "healthz answers" curl -sf "$base/healthz"
 check "manifest is valid JSON with schema_version 1" sh -c "curl -sf $base/.well-known/helixos-module.json | grep -q '\"schema_version\":1'"
 check "API refuses unauthenticated calls" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $base/api/app/notes)\" = 401 ]"
+check "runbooks API refuses unauthenticated calls" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $base/api/app/runbooks)\" = 401 ]"
 check "PocketBase dashboard is hidden" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $base/_/)\" = 404 ]"
 check "pages are frameable by hosts" sh -c "! curl -sI $base/ | grep -qi x-frame-options"
 check "UI is served" sh -c "curl -sf $base/ | grep -q '<html'"
 kill $pid 2>/dev/null; rm -rf "$dir"
+
+echo "== dev loop"
+hport=$((30000 + RANDOM % 10000)); mport=$((hport + 1)); dir=$(mktemp -d)
+/tmp/module-selftest devhost --addr 127.0.0.1:$hport --issuer http://127.0.0.1:$hport --module http://127.0.0.1:$mport >"$dir/host.log" 2>&1 &
+hpid=$!
+# The module proxies its UI to "a dev server" — the dev host page stands in for next dev.
+HELIXOS_ISSUERS=http://127.0.0.1:$hport MODULE_WEB_DEV_PROXY=http://127.0.0.1:$hport /tmp/module-selftest serve --http 127.0.0.1:$mport --dir "$dir" >"$dir/log" 2>&1 &
+mpid=$!
+for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$mport/healthz" >/dev/null && curl -sf "http://127.0.0.1:$hport/devhost/config" >/dev/null && break; sleep 0.2; done
+host="http://127.0.0.1:$hport"; mod="http://127.0.0.1:$mport"
+check "dev host boots and frames the module" sh -c "curl -sf $host/ | grep -q 'helixos-module/1'"
+check "dev host publishes a JWKS" sh -c "curl -sf $host/.well-known/jwks.json | grep -q '\"alg\":\"ES256\"'"
+check "dev host answers unimplemented host API with 501" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer x' -H 'X-HelixOS-Installation: inst_dev' -X POST $host/api/module-host/v1/runs)\" = 501 ]"
+check "dev proxy serves the UI from the dev server" sh -c "curl -sf $mod/ | grep -q 'HelixOS dev host'"
+check "dev proxy leaves the manifest to the module" sh -c "curl -sf $mod/.well-known/helixos-module.json | grep -q '\"schema_version\":1'"
+check "dev proxy never proxies /api/" sh -c "[ \"\$(curl -s -o /dev/null -w '%{http_code}' $mod/api/app/notes)\" = 401 ]"
+check "dev host token is accepted by the module" sh -c "tok=\$(curl -sf -X POST -H 'Origin: $host' $host/devhost/token | sed -n 's/.*\"token\":\"\([^\"]*\)\".*/\1/p'); curl -sf -H \"Authorization: Bearer \$tok\" $mod/api/app/notes | grep -q notes"
+check "runbooks are served to a signed-in user" sh -c "tok=\$(curl -sf -X POST -H 'Origin: $host' $host/devhost/token | sed -n 's/.*\"token\":\"\([^\"]*\)\".*/\1/p'); curl -sf -H \"Authorization: Bearer \$tok\" $mod/api/app/runbooks/notes-agent | grep -q '_note_add'"
+kill $mpid $hpid 2>/dev/null; rm -rf "$dir"
 
 echo "== $pass passed, $fail failed"
 [ $fail -eq 0 ]

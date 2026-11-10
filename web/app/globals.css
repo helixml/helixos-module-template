@@ -77,3 +77,83 @@ button:disabled { opacity: 0.5; cursor: default; }
 .error { color: var(--destructive); }
 .run-frame { width: 100%; border: 1px solid var(--border); border-radius: var(--radius); display: block; }
 pre { white-space: pre-wrap; margin: 6px 0 0; font: inherit; }
+.small { font-size: 12px; }
+.eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted-foreground); }
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.link-button:hover { text-decoration: underline; }
+.back-link { display: inline-block; margin-bottom: 12px; font-size: 12px; color: var(--muted-foreground); text-decoration: none; }
+.back-link:hover { color: var(--foreground); }
+
+/* Runbooks page (app/runbooks) */
+.page.reading { max-width: 760px; }
+.list-link { display: flex; flex-direction: column; gap: 2px; color: inherit; text-decoration: none; }
+.list-link:hover { border-color: var(--primary); }
+.article-head { border-bottom: 1px solid var(--border); padding-bottom: 14px; margin: 4px 0 20px; }
+.article-head h1 { font-size: 24px; margin: 2px 0 4px; }
+.article-head p { margin: 4px 0 0; }
+
+/* Runbook drawer (components/runbook-drawer.tsx) */
+.drawer { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: flex-end; }
+.drawer-backdrop { position: absolute; inset: 0; border: 0; border-radius: 0; padding: 0; background: rgb(0 0 0 / 0.45); cursor: default; }
+.drawer-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 720px;
+  height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 32px rgb(0 0 0 / 0.2);
+}
+.drawer-head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.drawer-head h2 { font-size: 18px; margin: 2px 0 0; }
+.drawer-head p { margin: 4px 0 0; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px; }
+.callout {
+  margin: 0 0 18px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+/* Runbook markdown (components/runbook-markdown.tsx) */
+.runbook-prose { font-size: 15px; line-height: 1.7; overflow-wrap: break-word; }
+.runbook-prose > :first-child { margin-top: 0; }
+.runbook-prose > :last-child { margin-bottom: 0; }
+.runbook-prose p, .runbook-prose ul, .runbook-prose ol, .runbook-prose pre, .runbook-prose table, .runbook-prose blockquote { margin: 0 0 0.9em; }
+.runbook-prose h1, .runbook-prose h2, .runbook-prose h3, .runbook-prose h4 { line-height: 1.3; font-weight: 650; }
+.runbook-prose h1 { font-size: 21px; margin: 1.6em 0 0.6em; }
+.runbook-prose h2 { font-size: 18px; margin: 1.8em 0 0.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.runbook-prose h3 { font-size: 16px; margin: 1.4em 0 0.4em; }
+.runbook-prose ul, .runbook-prose ol { padding-left: 1.5em; }
+.runbook-prose li { margin: 0.3em 0; }
+.runbook-prose li::marker { color: var(--muted-foreground); }
+.runbook-prose a { color: var(--primary); }
+.runbook-prose hr { border: 0; border-top: 1px solid var(--border); margin: 2em 0; }
+.runbook-prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.runbook-prose pre { background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.8em 1em; overflow-x: auto; white-space: pre; font-size: 13px; }
+.runbook-prose pre code { background: none; border: 0; padding: 0; }
+.runbook-prose blockquote { border-left: 3px solid var(--primary); padding-left: 1em; color: var(--muted-foreground); }
+.runbook-prose table { width: 100%; border-collapse: collapse; font-size: 14px; display: block; overflow-x: auto; }
+.runbook-prose th, .runbook-prose td { border: 1px solid var(--border); padding: 0.4em 0.7em; text-align: left; vertical-align: top; }
+.runbook-prose th { background: var(--muted); }

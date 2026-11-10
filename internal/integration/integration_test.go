@@ -5,22 +5,17 @@ package integration
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/helixml/helixos-module-template/cfg"
 	"github.com/helixml/helixos-module-template/internal/api"
+	"github.com/helixml/helixos-module-template/internal/devhost"
 	"github.com/helixml/helixos-module-template/internal/helixos"
 	_ "github.com/helixml/helixos-module-template/migrations"
 	"github.com/pocketbase/pocketbase/apis"
@@ -29,91 +24,46 @@ import (
 
 const moduleKey = "module-template"
 
-// fakeHost is a minimal contract host: JWKS, token minting, and a recorder for
-// host API calls.
+// fakeHost is internal/devhost (the same fake host ./dev runs on :8090),
+// served by an httptest server, with POST /runs answered so agent runs can be
+// tested.
 type fakeHost struct {
-	srv   *httptest.Server
-	key   *ecdsa.PrivateKey
-	mu    sync.Mutex
-	calls []hostCall
-}
-
-type hostCall struct {
-	Method, Path, Credential, Inst, UserToken string
-	Body                                      map[string]interface{}
+	*devhost.Host
+	srv *httptest.Server
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
 	t.Helper()
-	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	h := &fakeHost{key: k}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
-		x, y := make([]byte, 32), make([]byte, 32)
-		k.PublicKey.X.FillBytes(x)
-		k.PublicKey.Y.FillBytes(y)
-		json.NewEncoder(w).Encode(map[string]interface{}{"keys": []map[string]string{{
-			"kty": "EC", "crv": "P-256", "kid": "k1", "x": b64(x), "y": b64(y)}}})
-	})
-	mux.HandleFunc("/api/module-host/v1/", func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]interface{}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		h.mu.Lock()
-		h.calls = append(h.calls, hostCall{Method: r.Method, Path: strings.TrimPrefix(r.URL.Path, "/api/module-host/v1"),
-			Credential: r.Header.Get("Authorization"), Inst: r.Header.Get("X-HelixOS-Installation"),
-			UserToken: r.Header.Get("X-HelixOS-User-Token"), Body: body})
-		h.mu.Unlock()
-		switch {
-		case r.URL.Path == "/api/module-host/v1/runs" && r.Method == http.MethodPost:
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]interface{}{"run_id": "run_1", "status": "dispatched", "run_frame_url": h.srv.URL + "/runs/run_1/frame?t=x"})
-		case r.URL.Path == "/api/module-host/v1/whoami":
-			json.NewEncoder(w).Encode(map[string]interface{}{"org": "org_a", "org_name": "Org A", "scopes": []string{"agents.run"}})
-		default:
-			w.WriteHeader(http.StatusNotImplemented)
-			json.NewEncoder(w).Encode(map[string]string{"error": "nope", "code": "not_implemented"})
-		}
-	})
-	h.srv = httptest.NewServer(mux)
+	dh, err := devhost.New(devhost.Options{ModuleKey: moduleKey, Credential: "hxm_test", Org: "org_a", OrgName: "Org A",
+		Scopes: []string{"agents.run"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &fakeHost{Host: dh, srv: httptest.NewServer(dh)}
 	t.Cleanup(h.srv.Close)
+	dh.SetIssuer(h.srv.URL)
+	dh.Handle("POST /runs", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"run_id": "run_1", "status": "dispatched", "run_frame_url": h.srv.URL + "/runs/run_1/frame?t=x"})
+	})
 	return h
 }
 
-func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
-
 // token mints a contract token. Override fields via mut.
 func (h *fakeHost) token(typ, org, inst string, mut func(c map[string]interface{})) string {
-	now := time.Now().Unix()
-	c := map[string]interface{}{"iss": h.srv.URL, "aud": "module:" + moduleKey, "typ": typ, "org": org, "inst": inst,
-		"sub": "user-" + org, "name": "Person " + org, "iat": now, "nbf": now, "exp": now + 300}
-	if typ == "host" {
-		jti := make([]byte, 8)
-		rand.Read(jti)
-		c["jti"] = b64(jti)
-		c["bot"] = "m-" + moduleKey + "-x"
-	}
-	if mut != nil {
-		mut(c)
-	}
-	hb, _ := json.Marshal(map[string]string{"alg": "ES256", "typ": "JWT", "kid": "k1"})
-	pb, _ := json.Marshal(c)
-	in := b64(hb) + "." + b64(pb)
-	d := sha256.Sum256([]byte(in))
-	r, s, _ := ecdsa.Sign(rand.Reader, h.key, d[:])
-	sig := make([]byte, 64)
-	r.FillBytes(sig[:32])
-	s.FillBytes(sig[32:])
-	return in + "." + b64(sig)
+	return h.Mint(typ, org, inst, mut)
 }
 
-func (h *fakeHost) lastCall() hostCall {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.calls[len(h.calls)-1]
-}
+func (h *fakeHost) lastCall() devhost.Call { return h.LastCall() }
 
 // boot starts the module against host.
 func boot(t *testing.T, host *fakeHost) *httptest.Server {
+	t.Helper()
+	return bootWith(t, host, nil)
+}
+
+// bootWith starts the module against host after mut adjusts its config.
+func bootWith(t *testing.T, host *fakeHost, mut func(c *cfg.Config)) *httptest.Server {
 	t.Helper()
 	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
 	if err := app.Bootstrap(); err != nil {
@@ -125,6 +75,9 @@ func boot(t *testing.T, host *fakeHost) *httptest.Server {
 	t.Cleanup(func() { app.ResetBootstrapState() })
 	c := &cfg.Config{Key: moduleKey, Issuers: []string{host.srv.URL}, Credentials: map[string]string{host.srv.URL: "hxm_test"},
 		Endpoints: map[string]string{}, WebDir: "/nonexistent"}
+	if mut != nil {
+		mut(c)
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	deps := &api.Deps{App: app, Cfg: c,
 		Verifier: helixos.NewVerifier(helixos.Settings{ModuleKey: c.Key, Trusts: c.Trusts, HostBase: c.HostBase, HTTP: client}),
@@ -173,6 +126,9 @@ func TestManifestAndHealth(t *testing.T) {
 	code, m := do(t, "GET", srv.URL+"/.well-known/helixos-module.json", "", nil)
 	if code != 200 || m["key"] != moduleKey || m["schema_version"].(float64) != 1 {
 		t.Fatalf("manifest %d %v", code, m)
+	}
+	if secs := m["sections"].([]interface{}); len(secs) != 2 || secs[1].(map[string]interface{})["path"] != "/runbooks" {
+		t.Fatalf("sections = %v", secs)
 	}
 	if code, _ := do(t, "GET", srv.URL+"/healthz", "", nil); code != 200 {
 		t.Fatalf("healthz %d", code)
@@ -270,6 +226,53 @@ func TestAskAgentUsesHostAPI(t *testing.T) {
 	}
 	if !strings.Contains(c.Body["prompt"].(string), "do things") {
 		t.Fatalf("prompt = %v", c.Body["prompt"])
+	}
+	// The instructions are the notes-agent runbook, exactly as the Runbooks
+	// page shows it, with the tool prefix filled in.
+	_, rb := do(t, "GET", srv.URL+"/api/app/runbooks/notes-agent", user, nil)
+	sys, _ := c.Body["system_prompt"].(string)
+	if sys == "" || sys != rb["markdown"] {
+		t.Fatalf("system_prompt %q is not the runbook %q", sys, rb["markdown"])
+	}
+	if !strings.Contains(sys, "module_template_note_add") || strings.Contains(sys, "{{") {
+		t.Fatalf("runbook vars not filled: %q", sys)
+	}
+	if meta, _ := c.Body["meta"].(map[string]interface{}); meta["runbook"] != "notes-agent" {
+		t.Fatalf("run meta = %v", c.Body["meta"])
+	}
+}
+
+// TestRunbooksAPI: read-only, behind the user token like the rest of /api/app.
+func TestRunbooksAPI(t *testing.T) {
+	host := newFakeHost(t)
+	srv := boot(t, host)
+	user := host.token("user", "org_a", "inst_a", nil)
+	for _, path := range []string{"/api/app/runbooks", "/api/app/runbooks/notes-agent"} {
+		if code, _ := do(t, "GET", srv.URL+path, "", nil); code != 401 {
+			t.Fatalf("%s without a token: %d", path, code)
+		}
+		if code, _ := do(t, "GET", srv.URL+path, host.token("host", "org_a", "inst_a", nil), nil); code != 401 {
+			t.Fatalf("%s with a host token: %d", path, code)
+		}
+	}
+	code, list := do(t, "GET", srv.URL+"/api/app/runbooks", user, nil)
+	items, _ := list["runbooks"].([]interface{})
+	if code != 200 || len(items) == 0 {
+		t.Fatalf("list %d %v", code, list)
+	}
+	first := items[0].(map[string]interface{})
+	if first["key"] != "notes-agent" || first["title"] == "" || first["summary"] == "" || first["markdown"] != nil {
+		t.Fatalf("list item = %v", first)
+	}
+	code, rb := do(t, "GET", srv.URL+"/api/app/runbooks/notes-agent", user, nil)
+	if code != 200 || rb["title"] != first["title"] || !strings.Contains(rb["markdown"].(string), "## Tools") {
+		t.Fatalf("get %d %v", code, rb)
+	}
+	if code, body := do(t, "GET", srv.URL+"/api/app/runbooks/nope", user, nil); code != 404 || body["code"] != "not_found" {
+		t.Fatalf("unknown runbook %d %v", code, body)
+	}
+	if code, _ := do(t, "POST", srv.URL+"/api/app/runbooks/notes-agent", user, map[string]string{}); code == 200 || code == 201 {
+		t.Fatalf("runbooks are read-only: %d", code)
 	}
 }
 

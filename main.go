@@ -3,15 +3,18 @@
 //
 //	module serve --http 0.0.0.0:8080 --dir ./pb_data
 //	module seed --host http://localhost:8090 --org org_dev
+//	module devhost   # local fake host for development (see ./dev)
 package main
 
 import (
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/helixml/helixos-module-template/cfg"
 	"github.com/helixml/helixos-module-template/internal/api"
+	"github.com/helixml/helixos-module-template/internal/devhost"
 	"github.com/helixml/helixos-module-template/internal/helixos"
 	"github.com/helixml/helixos-module-template/internal/module"
 	"github.com/helixml/helixos-module-template/internal/seed"
@@ -23,6 +26,15 @@ import (
 )
 
 func main() {
+	// The dev host is a separate process with no PocketBase and no module
+	// configuration of its own.
+	if len(os.Args) > 1 && os.Args[1] == "devhost" {
+		if err := devhost.Main(os.Args[2:], module.DefaultKey); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	app := pocketbase.New()
 	// Schema is code: the dashboard must never generate migrations.
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{Automigrate: false})
