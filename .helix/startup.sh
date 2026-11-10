@@ -4,8 +4,9 @@
 #
 #  • Web service (HELIX_WEB_SERVICE_PORT set): build and run the production
 #    image in the foreground, data on the durable HELIX_WEB_SERVICE_DATA_DIR.
-#  • Agent dev environment (no port): build the binary and UI so the agent can
-#    run `go run . serve` and `npm --prefix web run dev` while it works.
+#  • Agent dev environment (no port): build, then start ./dev in the background:
+#    the module on :8080 (hot-reloading UI; what HelixOS Dev preview frames) and
+#    the local dev host on :8090. Log: /tmp/module-dev.log.
 set -euo pipefail
 echo "🚀 Module startup in $(pwd)"
 
@@ -21,3 +22,7 @@ fi
 echo "🛠  agent dev mode: see AGENTS.md (run ./selftest to check everything)"
 if command -v go >/dev/null 2>&1; then go build ./... || true; fi
 if command -v npm >/dev/null 2>&1; then (cd web && npm ci --no-audit --no-fund) || true; fi
+if command -v go >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+  nohup ./dev > /tmp/module-dev.log 2>&1 &
+  echo "▶  ./dev started: module http://localhost:8080, dev host http://localhost:8090 (log /tmp/module-dev.log)"
+fi
