@@ -18,6 +18,8 @@ internal/ops/           business logic; REST and MCP both call these functions
 internal/api/           HTTP routes: UI API (/api/app/*), /mcp, /helixos/events, files, static UI
 internal/mcp/           the module's agent tools (JSON-RPC over POST /mcp)
 internal/seed/          fixture data shared by the `seed` command, ./dev and the tests
+internal/runbook/       parses runbooks/*.md (frontmatter, includes, {{vars}})
+runbooks/               agent instructions, one markdown file per runbook (embedded)
 internal/devhost/       local fake host (`go run . devhost`): JWKS, tokens, frame page, whoami
 internal/integration/   in-process tests against internal/devhost
 web/                    Next.js static export; web/lib/helixos-sdk.ts speaks the frame protocol
@@ -48,6 +50,41 @@ selftest                run this before every PR
 7. **Degrade on `not_implemented`.** Hosts differ (cyber has no Slack); check
    `helixos.NotImplemented(err)` and carry on.
 8. **Migrations are additive.** Add a new file; never edit or delete an applied one.
+9. **Agent instructions live in `runbooks/*.md`.** Humans see them on the Runbooks
+   page, rendered from the same text the agent is given. Never inline long prompts in
+   Go: build a run's instructions from a runbook (`d.runbookText(key)`).
+
+## Runbooks
+
+A runbook is the workflow an agent follows: markdown with a short frontmatter.
+
+```
+---
+key: notes-agent            # = the file name (runbooks/notes-agent.md)
+title: Notes agent
+summary: One line on what the agent does.
+order: 1                    # optional; sorts the list
+---
+You help with notes in the {{module_name}} module…
+```
+
+- **Runs.** Pass the runbook's text as the run's `system_prompt` and put its key in
+  the run's `meta` (`internal/api/handlers.go`, `askAgent`). Per-run facts (the note,
+  the role) go in the `prompt`, not the runbook.
+- **Vars.** `{{name}}` placeholders are filled from `runbookVars()`
+  (`internal/api/runbooks.go`: `module_name`, `tool_prefix`), for the agent and for
+  the page alike, so tool names follow `MODULE_KEY`.
+- **Shared text** goes in a fragment, a `_name.md` file that is not listed itself,
+  pulled in by a line of its own: `<!-- include: _name.md -->`. It is expanded before
+  anyone sees the text, so each runbook reads as one complete document.
+- **Showing them.** `GET /api/app/runbooks` lists `{key, title, summary}`;
+  `GET /api/app/runbooks/{key}` adds `markdown`. Both are read-only and need a user
+  token. The **Runbooks** section (`/runbooks`, in the manifest) lists and renders
+  them; wherever the UI starts or shows a run, add
+  `<ViewRunbookButton runbookKey=…>` (`web/components/runbook-drawer.tsx`) so a person
+  can read what the agent will do before and while it runs.
+- If an exact prompt matters (a deployed module), pin it with a golden-file test
+  before moving it into a runbook, and keep it.
 
 ## Running locally
 

@@ -59,6 +59,9 @@ func (d *Deps) deleteNote(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]bool{"ok": true})
 }
 
+// notesRunbook is the runbook the note helper follows.
+const notesRunbook = "notes-agent"
+
 // POST /api/app/notes/{id}/agent — ask an agent to work on a note. The host
 // owns the agent: the module only sends the instructions and gets a run back,
 // whose run_frame_url the UI nests to show the live run.
@@ -68,16 +71,16 @@ func (d *Deps) askAgent(e *core.RequestEvent) error {
 	if err != nil {
 		return fail(e, err)
 	}
-	p := module.ToolPrefix(d.Cfg.Key)
 	run, err := d.Host.StartRun(e.Request.Context(), c, helixos.RunRequest{
 		BotKey: "note-helper-" + safeKey(c.UserID),
 		Title:  "Note helper",
-		SystemPrompt: "You help with notes in the " + module.Name + " module. Use the " + p + "_note_add tool to save what you produce " +
-			"as a new note, and " + p + "_notes_list to read the existing notes.",
+		// The instructions are runbooks/notes-agent.md: never inline a prompt
+		// here. The run's meta names the runbook so the UI can show it.
+		SystemPrompt: d.runbookText(notesRunbook),
 		Prompt: fmt.Sprintf("Read the note titled %q and write a short follow-up note with next steps.\n\nNote body:\n%s",
 			rec.GetString("title"), rec.GetString("body")),
 		ToolGroups: []string{"memory"},
-		Meta:       map[string]interface{}{"note_id": rec.Id},
+		Meta:       map[string]interface{}{"note_id": rec.Id, "runbook": notesRunbook},
 	})
 	if err != nil {
 		if helixos.NotImplemented(err) {

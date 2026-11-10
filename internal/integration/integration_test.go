@@ -127,6 +127,9 @@ func TestManifestAndHealth(t *testing.T) {
 	if code != 200 || m["key"] != moduleKey || m["schema_version"].(float64) != 1 {
 		t.Fatalf("manifest %d %v", code, m)
 	}
+	if secs := m["sections"].([]interface{}); len(secs) != 2 || secs[1].(map[string]interface{})["path"] != "/runbooks" {
+		t.Fatalf("sections = %v", secs)
+	}
 	if code, _ := do(t, "GET", srv.URL+"/healthz", "", nil); code != 200 {
 		t.Fatalf("healthz %d", code)
 	}
@@ -223,6 +226,53 @@ func TestAskAgentUsesHostAPI(t *testing.T) {
 	}
 	if !strings.Contains(c.Body["prompt"].(string), "do things") {
 		t.Fatalf("prompt = %v", c.Body["prompt"])
+	}
+	// The instructions are the notes-agent runbook, exactly as the Runbooks
+	// page shows it, with the tool prefix filled in.
+	_, rb := do(t, "GET", srv.URL+"/api/app/runbooks/notes-agent", user, nil)
+	sys, _ := c.Body["system_prompt"].(string)
+	if sys == "" || sys != rb["markdown"] {
+		t.Fatalf("system_prompt %q is not the runbook %q", sys, rb["markdown"])
+	}
+	if !strings.Contains(sys, "module_template_note_add") || strings.Contains(sys, "{{") {
+		t.Fatalf("runbook vars not filled: %q", sys)
+	}
+	if meta, _ := c.Body["meta"].(map[string]interface{}); meta["runbook"] != "notes-agent" {
+		t.Fatalf("run meta = %v", c.Body["meta"])
+	}
+}
+
+// TestRunbooksAPI: read-only, behind the user token like the rest of /api/app.
+func TestRunbooksAPI(t *testing.T) {
+	host := newFakeHost(t)
+	srv := boot(t, host)
+	user := host.token("user", "org_a", "inst_a", nil)
+	for _, path := range []string{"/api/app/runbooks", "/api/app/runbooks/notes-agent"} {
+		if code, _ := do(t, "GET", srv.URL+path, "", nil); code != 401 {
+			t.Fatalf("%s without a token: %d", path, code)
+		}
+		if code, _ := do(t, "GET", srv.URL+path, host.token("host", "org_a", "inst_a", nil), nil); code != 401 {
+			t.Fatalf("%s with a host token: %d", path, code)
+		}
+	}
+	code, list := do(t, "GET", srv.URL+"/api/app/runbooks", user, nil)
+	items, _ := list["runbooks"].([]interface{})
+	if code != 200 || len(items) == 0 {
+		t.Fatalf("list %d %v", code, list)
+	}
+	first := items[0].(map[string]interface{})
+	if first["key"] != "notes-agent" || first["title"] == "" || first["summary"] == "" || first["markdown"] != nil {
+		t.Fatalf("list item = %v", first)
+	}
+	code, rb := do(t, "GET", srv.URL+"/api/app/runbooks/notes-agent", user, nil)
+	if code != 200 || rb["title"] != first["title"] || !strings.Contains(rb["markdown"].(string), "## Tools") {
+		t.Fatalf("get %d %v", code, rb)
+	}
+	if code, body := do(t, "GET", srv.URL+"/api/app/runbooks/nope", user, nil); code != 404 || body["code"] != "not_found" {
+		t.Fatalf("unknown runbook %d %v", code, body)
+	}
+	if code, _ := do(t, "POST", srv.URL+"/api/app/runbooks/notes-agent", user, map[string]string{}); code == 200 || code == 201 {
+		t.Fatalf("runbooks are read-only: %d", code)
 	}
 }
 

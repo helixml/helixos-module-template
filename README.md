@@ -16,6 +16,7 @@ The example is a small **Notes** module that uses every part of the contract:
 | Agent tools over MCP | `internal/mcp/mcp.go` |
 | Host API: whoami, agent runs | `internal/helixos/hostapi.go`, `internal/api/handlers.go` |
 | Nested live run view | `web/components/run-frame.tsx` |
+| Agent runbooks, shown on a Runbooks page and next to runs | `runbooks/*.md`, `internal/runbook/`, `web/app/runbooks/` |
 | Events (`run.completed`, `installation.changed`), deduped | `internal/api/handlers.go` |
 | Frame protocol (tokens, theme, navigation) | `web/lib/helixos-sdk.ts` |
 

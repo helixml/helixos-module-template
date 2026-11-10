@@ -87,6 +87,8 @@ func Register(se *core.ServeEvent, d *Deps) {
 	g.DELETE("/notes/{id}", d.deleteNote)
 	g.POST("/notes/{id}/agent", d.askAgent)
 	g.GET("/runs/{id}", d.getRun)
+	g.GET("/runbooks", d.listRunbooks)
+	g.GET("/runbooks/{key}", d.getRunbook)
 
 	// UI. In development (./dev) a `next dev` server, proxied so the UI and its
 	// API share one origin; otherwise the static Next.js export (trailingSlash,
