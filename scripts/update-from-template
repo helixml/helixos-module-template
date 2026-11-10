@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Merges the latest helixos-module-template into this module.
+#
+# A module repo is generated from the template (not forked), so it has no link
+# to it. This adds the template as the `template` remote (once), fetches it,
+# and merges template/main into the current branch. On conflicts nothing is
+# committed: resolve them, run ./selftest, then commit.
+#
+#   scripts/update-from-template            # merge template/main
+#   TEMPLATE_URL=… TEMPLATE_BRANCH=… scripts/update-from-template
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+url=${TEMPLATE_URL:-https://github.com/helixml/helixos-module-template.git}
+branch=${TEMPLATE_BRANCH:-main}
+
+if [ -n "$(git status --porcelain)" ]; then
+  echo "The working tree has uncommitted changes. Commit or stash them first." >&2
+  exit 1
+fi
+if ! git remote get-url template >/dev/null 2>&1; then
+  git remote add template "$url"
+  echo "Added remote 'template' → $url"
+fi
+git fetch --no-tags template "$branch"
+
+# The first update of a module created from a template snapshot shares no
+# history with it; allow that once.
+args=(--no-ff --no-edit)
+if ! git merge-base HEAD "template/$branch" >/dev/null 2>&1; then
+  echo "No shared history with the template yet: merging with --allow-unrelated-histories."
+  args+=(--allow-unrelated-histories)
+fi
+
+if git merge "${args[@]}" -m "chore: merge helixos-module-template ($branch)" "template/$branch"; then
+  echo "Merged template/$branch. Run ./selftest, then push."
+else
+  cat >&2 <<MSG
+
+The merge has conflicts and was NOT committed.
+  • git status                    lists the conflicted files
+  • keep your module's code; take the template's changes to the contract
+    plumbing (internal/helixos, internal/devhost, web/lib/helixos-sdk.ts,
+    ./dev, ./selftest, .helix/startup.sh)
+  • git add <files> && ./selftest && git commit
+  • git merge --abort             gives up and restores your branch
+MSG
+  exit 1
+fi
