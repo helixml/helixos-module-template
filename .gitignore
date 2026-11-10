@@ -6,3 +6,4 @@ web/next-env.d.ts
 /module
 *.log
 web/tsconfig.tsbuildinfo
+.dev-data/

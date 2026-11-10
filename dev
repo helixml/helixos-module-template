@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# The inner dev loop. Runs, until Ctrl-C:
+#
+#   :8080  the module (Go server), the one origin for everything: manifest,
+#          API, MCP, and the UI, which it reverse-proxies to `next dev`
+#          (MODULE_WEB_DEV_PROXY) so edits to web/ hot-reload. Rebuilt and
+#          restarted when a .go file changes.
+#   :3000  `next dev` for web/ (loopback only; reached through :8080)
+#   :8090  the local dev host (`module devhost`, loopback only): open
+#          http://localhost:8090 to use the module as a signed-in dev user
+#
+# Data lives in .dev-data/ (seeded on the first run); delete it to start over.
+#
+# Production security stays on: MODULE_DEV is never set here, because :8080 is
+# what a HelixOS Dev preview exposes publicly. The only differences from
+# production are the UI proxy, the throwaway data, and that the local dev host
+# is a trusted issuer of this process.
+#
+# Ports: DEV_PORT (8080), DEV_WEB_PORT (3000), DEV_HOST_PORT (8090).
+# Stop it with Ctrl-C, or `kill $(cat .dev-data/dev.pid)` when backgrounded.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+PORT=${DEV_PORT:-8080}
+WEB_PORT=${DEV_WEB_PORT:-3000}
+HOST_PORT=${DEV_HOST_PORT:-8090}
+DEV_HOST_URL="http://localhost:$HOST_PORT"
+DATA=.dev-data
+BIN=$DATA/bin/module
+STAMP=$DATA/.built
+
+log() { echo "[dev] $*"; }
+
+mkdir -p "$DATA/bin"
+if [ -f "$DATA/dev.pid" ] && kill -0 "$(cat "$DATA/dev.pid")" 2>/dev/null; then
+  log "already running (pid $(cat "$DATA/dev.pid")); stop it first"
+  exit 0
+fi
+for p in "$PORT" "$WEB_PORT" "$HOST_PORT"; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
+    log "port $p is already in use (set DEV_PORT / DEV_WEB_PORT / DEV_HOST_PORT to move)"; exit 1
+  fi
+done
+echo $$ >"$DATA/dev.pid"
+
+# ── configuration, for this process only ─────────────────────────────────────
+unset MODULE_DEV
+# A spec task may only have the dev credential; its keys are the host issuers.
+if [ -z "${HELIXOS_ISSUERS:-}" ] && [ -n "${HELIXOS_MODULE_DEV_CREDENTIALS:-}" ]; then
+  HELIXOS_ISSUERS=$(echo "$HELIXOS_MODULE_DEV_CREDENTIALS" | tr ',' '\n' | sed -n 's/=.*//p' | paste -sd, -)
+fi
+export HELIXOS_ISSUERS="${HELIXOS_ISSUERS:+$HELIXOS_ISSUERS,}$DEV_HOST_URL"
+DEVHOST_CREDENTIAL="hxm_devhost_$(od -An -tx1 -N12 /dev/urandom | tr -d ' \n')"
+export DEVHOST_CREDENTIAL
+if [ -n "${HELIXOS_MODULE_CREDENTIALS:-}" ]; then
+  export HELIXOS_MODULE_CREDENTIALS="$HELIXOS_MODULE_CREDENTIALS,$DEV_HOST_URL=$DEVHOST_CREDENTIAL"
+else
+  export HELIXOS_MODULE_DEV_CREDENTIALS="${HELIXOS_MODULE_DEV_CREDENTIALS:+$HELIXOS_MODULE_DEV_CREDENTIALS,}$DEV_HOST_URL=$DEVHOST_CREDENTIAL"
+fi
+export MODULE_WEB_DEV_PROXY="http://127.0.0.1:$WEB_PORT"
+export NEXT_TELEMETRY_DISABLED=1
+
+# ── processes ────────────────────────────────────────────────────────────────
+set -m # each background job gets its own process group, so it can be stopped whole
+server_pid="" host_pid="" web_pid=""
+
+stop() {
+  local p=${1:-}
+  [ -z "$p" ] && return 0
+  kill -TERM -- "-$p" 2>/dev/null || true
+  wait "$p" 2>/dev/null || true
+}
+cleanup() {
+  trap - EXIT INT TERM
+  log "stopping"
+  stop "$server_pid"; stop "$host_pid"; stop "$web_pid"
+  if [ "$(cat "$DATA/dev.pid" 2>/dev/null)" = "$$" ]; then rm -f "$DATA/dev.pid"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+build() {
+  touch "$STAMP.next"
+  if go build -o "$BIN.new" .; then
+    mv "$BIN.new" "$BIN"; mv "$STAMP.next" "$STAMP"; return 0
+  fi
+  mv "$STAMP.next" "$STAMP"; return 1
+}
+
+changed() {
+  [ -n "$(find . \( -path ./web -o -path ./.dev-data -o -path ./.git -o -path ./pb_data \) -prune -o \
+    \( -name '*.go' -o -name go.mod -o -name go.sum \) -newer "$STAMP" -print -quit)" ]
+}
+
+start_go() {
+  "$BIN" devhost --addr "127.0.0.1:$HOST_PORT" --issuer "$DEV_HOST_URL" --module "http://localhost:$PORT" \
+    --credential "$DEVHOST_CREDENTIAL" &
+  host_pid=$!
+  "$BIN" serve --http "0.0.0.0:$PORT" --dir "$DATA" &
+  server_pid=$!
+}
+
+if [ ! -d web/node_modules ]; then log "installing web dependencies"; (cd web && npm ci --no-audit --no-fund); fi
+
+log "building"
+until build; do log "build failed; fix it and save (retrying on change)"; until changed; do sleep 1; done; done
+
+if [ ! -f "$DATA/data.db" ]; then
+  log "first run: seeding $DATA for org_dev on $DEV_HOST_URL"
+  "$BIN" seed --dir "$DATA" --host "$DEV_HOST_URL" --org org_dev
+fi
+
+(cd web && exec node_modules/.bin/next dev --port "$WEB_PORT" --hostname 127.0.0.1) &
+web_pid=$!
+start_go
+
+for _ in $(seq 1 100); do curl -sf "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
+log "module    http://localhost:$PORT   (UI hot-reloads via next dev on :$WEB_PORT)"
+log "dev host  $DEV_HOST_URL   ← open this to use the module as a signed-in dev user"
+log "watching .go files; Ctrl-C to stop"
+
+while true; do
+  sleep 1
+  if changed; then
+    log "Go change: rebuilding"
+    if build; then
+      stop "$server_pid"; stop "$host_pid"
+      start_go
+      log "restarted"
+    else
+      log "build failed; the previous server keeps running"
+    fi
+  fi
+done
