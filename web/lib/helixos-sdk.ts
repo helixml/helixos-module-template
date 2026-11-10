@@ -158,9 +158,21 @@ class HelixOSFrame {
     const t = await this.getToken();
     const headers: Record<string, string> = { ...(init.headers as Record<string, string>), Authorization: `Bearer ${t.token}` };
     if (init.body && !(init.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-    const res = await fetch(path, { ...init, headers });
+    let res: Response;
+    try {
+      res = await fetch(path, { ...init, headers });
+    } catch {
+      // The network failed or the module is restarting (a redeploy, ./dev).
+      throw new ApiError(0, "unreachable", "Can't reach this module right now. Check your connection, then try again.");
+    }
     const text = await res.text();
-    const data = text ? JSON.parse(text) : null;
+    let data: { code?: string; error?: string } | null = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      // A proxy or gateway answered with a page, not this module's JSON.
+      throw new ApiError(res.status, "bad_response", `The module is not answering properly (HTTP ${res.status}). Try again in a moment.`);
+    }
     if (!res.ok) throw new ApiError(res.status, data?.code || "error", data?.error || res.statusText);
     return data as T;
   }
