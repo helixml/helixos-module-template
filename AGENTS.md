@@ -17,10 +17,13 @@ internal/helixos/       contract plumbing: token verification, host API client (
 internal/ops/           business logic; REST and MCP both call these functions
 internal/api/           HTTP routes: UI API (/api/app/*), /mcp, /helixos/events, files, static UI
 internal/mcp/           the module's agent tools (JSON-RPC over POST /mcp)
-internal/seed/          fixture data shared by the `seed` command and the tests
-internal/integration/   in-process tests against a fake host
+internal/seed/          fixture data shared by the `seed` command, ./dev and the tests
+internal/devhost/       local fake host (`go run . devhost`): JWKS, tokens, frame page, whoami
+internal/integration/   in-process tests against internal/devhost
 web/                    Next.js static export; web/lib/helixos-sdk.ts speaks the frame protocol
-.helix/startup.sh       how Helix boots this as a web service
+dev                     the inner dev loop (module :8080, next dev, dev host :8090)
+.helix/startup.sh       how Helix boots this: web service, or ./dev in an agent task
+scripts/                update-from-template: merge the latest template into this module
 selftest                run this before every PR
 ```
 
@@ -49,21 +52,59 @@ selftest                run this before every PR
 ## Running locally
 
 ```bash
-# 1. a host: HelixOS dev stack on http://localhost:8090 (see helixos/README)
-# 2. the module
-HELIXOS_ISSUERS=http://localhost:8090 \
-HELIXOS_MODULE_CREDENTIALS=http://localhost:8090=<credential from registration> \
-MODULE_DEV=true go run . serve --http 0.0.0.0:4100
-go run . seed --host http://localhost:8090 --org <your org id>
-# 3. the UI, rebuilt on change (served by the binary from web/out)
-npm --prefix web run build
-# 4. register it in HelixOS: Modules → Register by URL → http://localhost:4100, then Install
+./dev
 ```
 
-In a Helix spec-task sandbox the host may not be reachable at its public URL; set
-`HELIXOS_ISSUER_ENDPOINTS=<public iss>=<reachable url>`. For calling your own API from
-a terminal, mint an 8-hour developer token in HelixOS (module page → Developer token)
-and send it as `Authorization: Bearer`.
+That is the whole loop. No HelixOS checkout or login is needed. In a Helix agent task
+`.helix/startup.sh` has already started it in the background (log:
+`/tmp/module-dev.log`; stop it with `kill $(cat .dev-data/dev.pid)`).
+
+| Port | What |
+|---|---|
+| `:8080` | The module: manifest, API, MCP, and the UI. In dev it reverse-proxies UI paths to `next dev` (`MODULE_WEB_DEV_PROXY`), so edits under `web/` hot-reload on the module's own origin. A `.go` change rebuilds and restarts it. |
+| `:8090` | The **local dev host** (`go run . devhost`, `internal/devhost`). Open **http://localhost:8090** in your browser: it frames the module as a signed-in dev user (`Dev User`, org `org_dev`) and speaks the frame protocol, exactly like HelixOS does. |
+| `:3000` | `next dev` (loopback only; always go through `:8080`). |
+
+- Data lives in `.dev-data/` and is seeded for `org_dev` on the first run. Delete the
+  directory to start over.
+- The dev host implements `whoami`. Every other host API call (agent runs, people,
+  Slack…) answers `501 not_implemented`; the module must degrade on that anyway (rule 7).
+  To exercise those, use Dev preview (below).
+- `./dev` trusts the dev host as an issuer for its own processes only. It does **not**
+  set `MODULE_DEV`: production security stays on, because `:8080` is what Dev preview
+  exposes publicly.
+- To call your own API from a terminal, mint a token from the dev host:
+
+  ```bash
+  tok=$(curl -s -X POST -H 'Origin: http://localhost:8090' localhost:8090/devhost/token | jq -r .token)
+  curl -H "Authorization: Bearer $tok" localhost:8080/api/app/notes
+  ```
+
+### Dev preview: your dev server inside real HelixOS
+
+When this repo is a module's dev task in HelixOS, a manager of the module's owner org
+can switch the module page from **Production** to **Dev preview**. HelixOS then frames
+this task's `:8080` (through a Helix preview URL) inside the real HelixOS UI, with real
+user tokens for the owner org, so changes appear there seconds after you save.
+
+- Only the UI and the module's host-API calls use the dev build. Bots, agent tools
+  (MCP), events and run views keep using the **production** deployment.
+- Host API calls from the dev build use `HELIXOS_MODULE_DEV_CREDENTIALS`, a dev-scoped
+  credential that only works for the owner org's installation. The production
+  credential never enters the task. HelixOS provides it (and `HELIXOS_ISSUERS`) as task
+  secrets; `./dev` picks them up, and derives the issuers from the credential when
+  `HELIXOS_ISSUERS` is not set.
+- The preview reads and writes `.dev-data/`, the task's throwaway database, under the
+  real owner org, so it starts empty: production data is never touched.
+
+## Delivering work
+
+Always deliver with **`propose_pull_request`**, on every kind of repo: GitHub, GitLab
+and Helix-hosted repos all have pull requests. Never merge to `main` yourself. Merging
+the pull request to `main` redeploys the module's web service.
+
+To pick up a newer template (contract plumbing, `./dev`, `./selftest`), run
+`scripts/update-from-template`, resolve any conflicts, and run `./selftest`.
 
 ## Before a PR
 
