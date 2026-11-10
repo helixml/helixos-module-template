@@ -88,8 +88,17 @@ func Register(se *core.ServeEvent, d *Deps) {
 	g.POST("/notes/{id}/agent", d.askAgent)
 	g.GET("/runs/{id}", d.getRun)
 
-	// Static UI (Next.js export with trailingSlash, so every page is a dir index).
-	if _, err := os.Stat(d.Cfg.WebDir); err == nil {
+	// UI. In development (./dev) a `next dev` server, proxied so the UI and its
+	// API share one origin; otherwise the static Next.js export (trailingSlash,
+	// so every page is a dir index).
+	if d.Cfg.WebDevProxy != "" {
+		h, err := devProxy(d.Cfg.WebDevProxy)
+		if err != nil {
+			log.Fatalf("module: MODULE_WEB_DEV_PROXY: %v", err)
+		}
+		log.Printf("module: proxying the UI to the dev server at %s (MODULE_WEB_DEV_PROXY)", d.Cfg.WebDevProxy)
+		se.Router.Any("/{path...}", h)
+	} else if _, err := os.Stat(d.Cfg.WebDir); err == nil {
 		se.Router.GET("/{path...}", staticUI(d.Cfg.WebDir))
 	} else {
 		log.Printf("module: no UI build at %s; serving the API only", d.Cfg.WebDir)
