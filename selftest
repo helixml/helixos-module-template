@@ -7,21 +7,25 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 pass=0; fail=0
+# The checks start throwaway copies of the module. In a Helix sandbox the
+# environment carries the real module's host configuration, which a module
+# started against a fake issuer refuses: run them without it.
+isolated() { env -u HELIXOS_MODULE_CREDENTIALS -u HELIXOS_MODULE_DEV_CREDENTIALS -u HELIXOS_ISSUER_ENDPOINTS -u MODULE_PUBLIC_URL "$@"; }
 check() { local name=$1; shift; if "$@" >/tmp/selftest.$$ 2>&1; then echo "  ok   $name"; pass=$((pass+1)); else echo "  FAIL $name"; sed 's/^/       /' /tmp/selftest.$$ | tail -20; fail=$((fail+1)); fi; }
 
 echo "== go"
 check "go vet" go vet ./...
-check "go test (unit + integration)" go test -count=1 ./...
+check "go test (unit + integration)" isolated go test -count=1 ./...
 check "go build" env CGO_ENABLED=0 go build -o /tmp/module-selftest .
 
 echo "== web"
 if [ ! -d web/node_modules ]; then (cd web && npm ci --no-audit --no-fund >/dev/null 2>&1); fi
 check "web typecheck" npm --prefix web run -s typecheck
-check "web build" npm --prefix web run -s build
+check "web build" env NEXT_DIST_DIR=.next-selftest npm --prefix web run -s build
 
 echo "== live smoke"
 port=$((20000 + RANDOM % 10000)); dir=$(mktemp -d)
-HELIXOS_ISSUERS=http://127.0.0.1:1 MODULE_WEB_DIR=web/out /tmp/module-selftest serve --http 127.0.0.1:$port --dir "$dir" >"$dir/log" 2>&1 &
+isolated env HELIXOS_ISSUERS=http://127.0.0.1:1 MODULE_WEB_DIR=web/.next-selftest /tmp/module-selftest serve --http 127.0.0.1:$port --dir "$dir" >"$dir/log" 2>&1 &
 pid=$!
 for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$port/healthz" >/dev/null && break; sleep 0.2; done
 base="http://127.0.0.1:$port"
@@ -36,10 +40,10 @@ kill $pid 2>/dev/null; rm -rf "$dir"
 
 echo "== dev loop"
 hport=$((30000 + RANDOM % 10000)); mport=$((hport + 1)); dir=$(mktemp -d)
-/tmp/module-selftest devhost --addr 127.0.0.1:$hport --issuer http://127.0.0.1:$hport --module http://127.0.0.1:$mport >"$dir/host.log" 2>&1 &
+isolated /tmp/module-selftest devhost --addr 127.0.0.1:$hport --issuer http://127.0.0.1:$hport --module http://127.0.0.1:$mport >"$dir/host.log" 2>&1 &
 hpid=$!
 # The module proxies its UI to "a dev server" — the dev host page stands in for next dev.
-HELIXOS_ISSUERS=http://127.0.0.1:$hport MODULE_WEB_DEV_PROXY=http://127.0.0.1:$hport /tmp/module-selftest serve --http 127.0.0.1:$mport --dir "$dir" >"$dir/log" 2>&1 &
+isolated env HELIXOS_ISSUERS=http://127.0.0.1:$hport MODULE_WEB_DEV_PROXY=http://127.0.0.1:$hport /tmp/module-selftest serve --http 127.0.0.1:$mport --dir "$dir" >"$dir/log" 2>&1 &
 mpid=$!
 for _ in $(seq 1 50); do curl -sf "http://127.0.0.1:$mport/healthz" >/dev/null && curl -sf "http://127.0.0.1:$hport/devhost/config" >/dev/null && break; sleep 0.2; done
 host="http://127.0.0.1:$hport"; mod="http://127.0.0.1:$mport"
