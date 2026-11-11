@@ -155,6 +155,19 @@ class HelixOSFrame {
 
   /** fetch() against this module's own API as the signed-in person. */
   async api<T>(path: string, init: RequestInit = {}): Promise<T> {
+    try {
+      return await this.call<T>(path, init);
+    } catch (e) {
+      // The token was refused although it had not expired: the host's signing
+      // key changed (the ./dev host restarts with every Go change). Ask the
+      // host for a new token once, and retry.
+      if (!(e instanceof ApiError) || e.status !== 401 || !this.framed) throw e;
+      this.current = null;
+      return this.call<T>(path, init);
+    }
+  }
+
+  private async call<T>(path: string, init: RequestInit): Promise<T> {
     const t = await this.getToken();
     const headers: Record<string, string> = { ...(init.headers as Record<string, string>), Authorization: `Bearer ${t.token}` };
     if (init.body && !(init.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";

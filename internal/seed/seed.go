@@ -13,7 +13,7 @@ import (
 func Seed(app core.App, t helixos.Tenant) error {
 	for _, n := range []ops.CreateNoteInput{
 		{Title: "Welcome", Body: "This module stores its data in PocketBase, scoped to your organization.", Source: "ui", By: "seed", ByName: "Seed"},
-		{Title: "Try the agent", Body: "Click \"Ask an agent\" on this note: the host runs an agent that writes a follow-up note through this module's MCP tool.", Source: "ui", By: "seed", ByName: "Seed"},
+		{Title: "Try the agent", Body: "In HelixOS, \"Ask an agent\" on this note runs an agent that writes a follow-up note through this module's MCP tool. This local dev host can't run agents: turn on Dev preview on the module's page in HelixOS to try it.", Source: "ui", By: "seed", ByName: "Seed"},
 	} {
 		if _, err := ops.CreateNote(app, t, n); err != nil {
 			return err
